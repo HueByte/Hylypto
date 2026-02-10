@@ -1,0 +1,37 @@
+{
+    "defaultDelayBetweenWaves": 30.0,
+    "maxConcurrentZombies": 100,
+    "waves": [
+        {
+            "waveNumber": 1,
+            "delayBeforeWaveSeconds": 10.0,
+            "hasBoss": false,
+            "spawns": [
+                { "archetype": "FAST", "count": 5, "delaySeconds": 0 },
+                { "archetype": "TANKY", "count": 2, "delaySeconds": 3 }
+            ]
+        },
+        {
+            "waveNumber": 2,
+            "delayBeforeWaveSeconds": 15.0,
+            "hasBoss": false,
+            "spawns": [
+                { "archetype": "FAST", "count": 8, "delaySeconds": 0 },
+                { "archetype": "TANKY", "count": 4, "delaySeconds": 2 },
+                { "archetype": "RANGED", "count": 2, "delaySeconds": 5 }
+            ]
+        },
+        {
+            "waveNumber": 3,
+            "delayBeforeWaveSeconds": 20.0,
+            "hasBoss": true,
+            "bossArchetype": "SPECIAL",
+            "spawns": [
+                { "archetype": "FAST", "count": 10, "delaySeconds": 0 },
+                { "archetype": "TANKY", "count": 6, "delaySeconds": 2 },
+                { "archetype": "RANGED", "count": 4, "delaySeconds": 4 },
+                { "archetype": "SPECIAL", "count": 1, "delaySeconds": 8 }
+            ]
+        }
+    ]
+}

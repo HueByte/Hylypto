@@ -1,0 +1,15 @@
+{
+    "Group": "com.hylypto",
+    "Name": "Hylypto",
+    "Version": "0.1.0-SNAPSHOT",
+    "Main": "com.hylypto.HylyptoPlugin",
+    "Description": "Systems-first Hytale mod framework: RTS control, zombie wave defense, survival, and modern combat.",
+    "Authors": [
+        {
+            "Name": "Hue"
+        }
+    ],
+    "ServerVersion": "*",
+    "Dependencies": {},
+    "OptionalDependencies": {}
+}
