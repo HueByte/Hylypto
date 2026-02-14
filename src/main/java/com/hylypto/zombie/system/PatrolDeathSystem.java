@@ -1,7 +1,7 @@
-package com.hylypto.waves.system;
+package com.hylypto.zombie.system;
 
-import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
@@ -9,26 +9,22 @@ import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathSystems;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
-import com.hylypto.waves.HordeManager;
+import com.hylypto.zombie.PatrolManager;
 
 import javax.annotation.Nonnull;
 import java.util.UUID;
 
 /**
- * ECS system that detects NPC deaths and notifies the HordeManager.
- * Only counts deaths of entities tracked as horde zombies (by UUID).
+ * ECS system that detects patrol zombie deaths and notifies PatrolManager.
  */
-public class ZombieDeathSystem extends DeathSystems.OnDeathSystem {
+public class PatrolDeathSystem extends DeathSystems.OnDeathSystem {
 
-    private final HordeManager hordeManager;
-    private ZombieAggroSystem aggroSystem;
+    private static final System.Logger LOG = System.getLogger(PatrolDeathSystem.class.getName());
 
-    public ZombieDeathSystem(HordeManager hordeManager) {
-        this.hordeManager = hordeManager;
-    }
+    private final PatrolManager patrolManager;
 
-    public void setAggroSystem(ZombieAggroSystem aggroSystem) {
-        this.aggroSystem = aggroSystem;
+    public PatrolDeathSystem(PatrolManager patrolManager) {
+        this.patrolManager = patrolManager;
     }
 
     @Nonnull
@@ -48,12 +44,9 @@ public class ZombieDeathSystem extends DeathSystems.OnDeathSystem {
         if (uuidComp == null) return;
 
         UUID uuid = uuidComp.getUuid();
-        if (!hordeManager.isHordeZombie(uuid)) return;
+        if (!patrolManager.isPatrolZombie(uuid)) return;
 
-        hordeManager.onZombieKilled(uuid);
-
-        if (aggroSystem != null) {
-            aggroSystem.cleanupZombie(uuid);
-        }
+        LOG.log(System.Logger.Level.DEBUG, "Patrol zombie died: " + uuid);
+        patrolManager.onZombieDeath(uuid);
     }
 }

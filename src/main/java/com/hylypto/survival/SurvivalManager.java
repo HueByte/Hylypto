@@ -1,14 +1,24 @@
 package com.hylypto.survival;
 
+import com.hylypto.zombie.PatrolManager;
+
 /**
  * Manager for the survival pillar.
- * Future: manages injury system, environmental hazards, and
- * integration with the RTS effectiveness modifier.
+ * Holds the patrol system and future subsystems (injury, environmental hazards, etc).
  */
 public class SurvivalManager {
 
-    public SurvivalManager() {
-        // Placeholder — will hold references to injury registry,
-        // environment hazard zones, etc.
+    private final PatrolManager patrolManager;
+
+    public SurvivalManager(PatrolManager patrolManager) {
+        this.patrolManager = patrolManager;
+    }
+
+    public PatrolManager getPatrolManager() {
+        return patrolManager;
+    }
+
+    public void shutdown() {
+        patrolManager.shutdown();
     }
 }

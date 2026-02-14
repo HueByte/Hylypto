@@ -1,4 +1,4 @@
-package com.hylypto.waves;
+package com.hylypto.zombie;
 
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.RemoveReason;
@@ -32,7 +32,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class HordeManager {
 
     private static final System.Logger LOG = System.getLogger(HordeManager.class.getName());
-    private static final double SPAWN_RADIUS = 8.0;
+    private static final double SPAWN_DISTANCE_MIN = 30.0;
+    private static final double SPAWN_DISTANCE_MAX = 50.0;
+    private static final double SPAWN_SCATTER_RADIUS = 5.0;
     private static final int SURFACE_SCAN_RANGE = 60;
     private static final String ZOMBIE_MODEL = "Zombie";
 
@@ -50,19 +52,31 @@ public class HordeManager {
             return "No world available.";
         }
 
-        Vector3d playerPos = getPlayerPosition(world);
-        LOG.log(System.Logger.Level.INFO,
-                "Spawning horde of " + count + " zombies near ("
-                + (int) playerPos.x + ", " + (int) playerPos.y + ", " + (int) playerPos.z + ")");
-
         List<Vector3d> spawnedPositions = new ArrayList<>();
 
         world.execute(() -> {
             try {
+                // Player position must be read on the world thread
+                Vector3d playerPos = getPlayerPosition(world);
+
+                // Generate spawn center 30-50 blocks away from player
+                ThreadLocalRandom rng = ThreadLocalRandom.current();
+                double angle = rng.nextDouble() * 2 * Math.PI;
+                double dist = SPAWN_DISTANCE_MIN + rng.nextDouble() * (SPAWN_DISTANCE_MAX - SPAWN_DISTANCE_MIN);
+                double cx = playerPos.x + Math.cos(angle) * dist;
+                double cz = playerPos.z + Math.sin(angle) * dist;
+                double cy = findSurfaceY(world, (int) cx, (int) playerPos.y + 30, (int) cz);
+                Vector3d spawnCenter = new Vector3d(cx, cy, cz);
+
+                LOG.log(System.Logger.Level.INFO,
+                        "Spawning horde of " + count + " zombies at ("
+                        + (int) cx + ", " + (int) cy + ", " + (int) cz
+                        + "), " + (int) dist + " blocks from player");
+
                 Store<EntityStore> store = world.getEntityStore().getStore();
 
                 for (int i = 0; i < count; i++) {
-                    Vector3d pos = spawnSingleZombie(store, playerPos, world);
+                    Vector3d pos = spawnSingleZombie(store, spawnCenter, world);
                     if (pos != null) {
                         spawnedPositions.add(pos);
                     }
@@ -151,7 +165,7 @@ public class HordeManager {
     private Vector3d spawnSingleZombie(Store<EntityStore> store, Vector3d center, World world) {
         try {
             double angle = ThreadLocalRandom.current().nextDouble() * 2 * Math.PI;
-            double radius = SPAWN_RADIUS * (0.5 + ThreadLocalRandom.current().nextDouble() * 0.5);
+            double radius = SPAWN_SCATTER_RADIUS * (0.5 + ThreadLocalRandom.current().nextDouble() * 0.5);
             double x = center.x + Math.cos(angle) * radius;
             double z = center.z + Math.sin(angle) * radius;
 

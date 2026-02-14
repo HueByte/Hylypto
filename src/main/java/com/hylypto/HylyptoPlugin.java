@@ -8,10 +8,14 @@ import com.hylypto.api.event.HylyptoEventBus;
 import com.hylypto.combat.CombatManager;
 import com.hylypto.rts.RtsManager;
 import com.hylypto.survival.SurvivalManager;
-import com.hylypto.waves.HordeManager;
-import com.hylypto.waves.HylyptoCommand;
-import com.hylypto.waves.system.ZombieAggroSystem;
-import com.hylypto.waves.system.ZombieDeathSystem;
+import com.hylypto.zombie.PatrolConfig;
+import com.hylypto.zombie.PatrolManager;
+import com.hylypto.zombie.system.PatrolTickSystem;
+import com.hylypto.zombie.system.PatrolDeathSystem;
+import com.hylypto.zombie.HordeManager;
+import com.hylypto.HylyptoCommand;
+import com.hylypto.zombie.system.ZombieAggroSystem;
+import com.hylypto.zombie.system.ZombieDeathSystem;
 
 import javax.annotation.Nonnull;
 
@@ -51,24 +55,34 @@ public class HylyptoPlugin extends JavaPlugin {
         // Pillar managers
         this.hordeManager = new HordeManager();
         this.rtsManager = new RtsManager();
-        this.survivalManager = new SurvivalManager();
         this.combatManager = new CombatManager();
 
-        // Commands
-        getCommandRegistry().registerCommand(new HylyptoCommand(hordeManager));
+        // Survival — patrol system
+        PatrolConfig patrolConfig = configLoader.loadOrDefault(
+                "patrol-config.json", PatrolConfig.class, new PatrolConfig());
+        PatrolManager patrolManager = new PatrolManager(patrolConfig);
+        this.survivalManager = new SurvivalManager(patrolManager);
 
-        // ECS systems — death tracking and aggro management for horde zombies
+        // Commands
+        getCommandRegistry().registerCommand(new HylyptoCommand(hordeManager, patrolManager));
+
+        // ECS systems — horde aggro + death tracking
         this.aggroSystem = new ZombieAggroSystem(hordeManager);
         ZombieDeathSystem deathSystem = new ZombieDeathSystem(hordeManager);
         deathSystem.setAggroSystem(aggroSystem);
         getEntityStoreRegistry().registerSystem(deathSystem);
         getEntityStoreRegistry().registerSystem(aggroSystem);
 
-        // Player disconnect — despawn all horde zombies when a player leaves
+        // ECS systems — patrol tick + death tracking
+        getEntityStoreRegistry().registerSystem(new PatrolTickSystem(patrolManager, patrolConfig));
+        getEntityStoreRegistry().registerSystem(new PatrolDeathSystem(patrolManager));
+
+        // Player disconnect — despawn all zombies when a player leaves
         getEventRegistry().register(PlayerDisconnectEvent.class, event -> {
-            getLogger().atInfo().log("Player disconnected — despawning horde zombies");
+            getLogger().atInfo().log("Player disconnected — despawning all zombies");
             aggroSystem.clearAll();
             hordeManager.despawnAll();
+            patrolManager.despawnAll();
         });
 
         getLogger().atInfo().log("Hylypto setup complete.");
@@ -85,6 +99,7 @@ public class HylyptoPlugin extends JavaPlugin {
 
         aggroSystem.clearAll();
         hordeManager.shutdown();
+        survivalManager.shutdown();
 
         getLogger().atInfo().log("Hylypto shutdown complete.");
     }

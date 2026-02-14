@@ -29,3 +29,4 @@ logs/
 *.env
 .claude/settings.local.json
 .dev/**
+claude.md

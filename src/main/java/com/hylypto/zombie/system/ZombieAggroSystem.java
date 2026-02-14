@@ -1,4 +1,4 @@
-package com.hylypto.waves.system;
+package com.hylypto.zombie.system;
 
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
@@ -7,11 +7,11 @@ import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.tick.DelayedEntitySystem;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
-import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
-import com.hylypto.waves.HordeManager;
+import com.hylypto.zombie.detection.PlayerFinder;
+import com.hylypto.zombie.HordeManager;
 
 import javax.annotation.Nonnull;
 import java.util.LinkedList;
@@ -20,9 +20,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ECS system that periodically checks horde zombies and ensures they
- * are actively targeting the nearest player. Detects stuck zombies
- * and triggers re-aggro to keep them moving toward players.
+ * ECS system that monitors horde zombies for stuck detection.
+ * The built-in Zombie AI (BodyMotionFind) handles pathfinding and
+ * movement toward players automatically — we do NOT override it.
+ * This system only detects stuck zombies and logs aggro range info.
  */
 public class ZombieAggroSystem extends DelayedEntitySystem<EntityStore> {
 
@@ -54,7 +55,7 @@ public class ZombieAggroSystem extends DelayedEntitySystem<EntityStore> {
     public void tick(float deltaTime, int entityIndex, @Nonnull ArchetypeChunk<EntityStore> chunk,
                      @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
         try {
-            // Periodic cleanup: prune invalid refs and orphaned position histories
+            // Periodic cleanup
             if (++tickCounter >= PRUNE_INTERVAL_TICKS) {
                 tickCounter = 0;
                 hordeManager.pruneInvalidRefs();
@@ -72,69 +73,27 @@ public class ZombieAggroSystem extends DelayedEntitySystem<EntityStore> {
 
             Vector3d currentPos = transform.getPosition();
 
+            // Track position history for stuck detection
             PositionHistory history = positionHistories.computeIfAbsent(uuid, k -> new PositionHistory());
             history.addPosition(currentPos);
 
             if (history.isStuck()) {
-                handleStuckZombie(uuid, currentPos, store, commandBuffer, entityIndex, chunk);
+                // Log stuck zombie — the engine AI should handle re-aggro naturally
+                Vector3d playerPos = PlayerFinder.findNearest(store, currentPos);
+                if (playerPos != null) {
+                    double dist = currentPos.distanceTo(playerPos);
+                    LOG.log(System.Logger.Level.INFO,
+                            "Zombie " + uuid + " stuck, " + (int) dist + " blocks from player");
+                    if (dist > MAX_AGGRO_DISTANCE) {
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Zombie " + uuid + " outside aggro range (" + (int) dist + " > " + (int) MAX_AGGRO_DISTANCE + ")");
+                    }
+                }
                 history.reset();
             }
         } catch (Exception e) {
             LOG.log(System.Logger.Level.ERROR, "Error in aggro tick: " + e.getMessage(), e);
         }
-    }
-
-    private void handleStuckZombie(UUID uuid, Vector3d zombiePos, Store<EntityStore> store,
-                                    CommandBuffer<EntityStore> commandBuffer, int entityIndex,
-                                    ArchetypeChunk<EntityStore> chunk) {
-        Vector3d playerPos = findNearestPlayerPosition(store);
-        if (playerPos == null) return;
-
-        double distance = zombiePos.distanceTo(playerPos);
-
-        if (distance > MAX_AGGRO_DISTANCE) {
-            LOG.log(System.Logger.Level.WARNING,
-                    "Zombie " + uuid + " is " + (int) distance + " blocks from nearest player — re-aggroing");
-        }
-
-        triggerReAggro(commandBuffer, entityIndex, chunk, playerPos);
-    }
-
-    private void triggerReAggro(CommandBuffer<EntityStore> commandBuffer, int entityIndex,
-                                 ArchetypeChunk<EntityStore> chunk, Vector3d targetPos) {
-        try {
-            NPCEntity npcEntity = chunk.getComponent(entityIndex, NPCEntity.getComponentType());
-            if (npcEntity != null) {
-                LOG.log(System.Logger.Level.DEBUG,
-                        "Re-aggroing NPC toward (" + (int) targetPos.x + ", " + (int) targetPos.y + ", " + (int) targetPos.z + ")");
-            }
-        } catch (Exception e) {
-            LOG.log(System.Logger.Level.ERROR, "Failed to trigger re-aggro: " + e.getMessage(), e);
-        }
-    }
-
-    private Vector3d findNearestPlayerPosition(Store<EntityStore> store) {
-        final Vector3d[] nearest = {null};
-        final double[] minDist = {Double.MAX_VALUE};
-
-        try {
-            store.forEachEntityParallel(Player.getComponentType(), (index, chunk, buffer) -> {
-                TransformComponent transform = chunk.getComponent(index, TransformComponent.getComponentType());
-                if (transform != null) {
-                    Vector3d pos = transform.getPosition();
-                    synchronized (nearest) {
-                        if (nearest[0] == null) {
-                            nearest[0] = pos;
-                            minDist[0] = 0;
-                        }
-                    }
-                }
-            });
-        } catch (Exception e) {
-            LOG.log(System.Logger.Level.ERROR, "Failed to find player position: " + e.getMessage(), e);
-        }
-
-        return nearest[0];
     }
 
     public void cleanupZombie(UUID uuid) {
