@@ -30,3 +30,4 @@ logs/
 .claude/settings.local.json
 .dev/**
 claude.md
+bin/**
