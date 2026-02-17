@@ -8,6 +8,7 @@ import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
+import com.hypixel.hytale.server.core.modules.debug.DebugUtils;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
@@ -136,15 +137,19 @@ public class PatrolManager {
             Vector3d position = new Vector3d(x, y, z);
             Vector3f rotation = new Vector3f(0, (float) Math.toDegrees(angle), 0);
 
+            boolean roleExists = NPCPlugin.get().hasRoleName(PATROL_ROLE);
             LOG.log(System.Logger.Level.INFO,
-                    "Attempting spawnNPC: role=" + PATROL_ROLE + " at (" + (int) x + ", " + (int) y + ", " + (int) z + ")");
+                    "[SPAWN] Attempting spawnNPC: model=" + model + " role=" + PATROL_ROLE
+                    + " roleExists=" + roleExists
+                    + " at (" + (int) x + ", " + (int) y + ", " + (int) z + ")");
 
-            // Spawn with our custom patrol role that has BodyMotionPath instruction
+            // Spawn using our custom config — "Appearance" field in the JSON sets the visual model
+            // The 2nd param is the NPC config name (determines both appearance + behavior)
             var result = NPCPlugin.get().spawnNPC(store, PATROL_ROLE, null, position, rotation);
 
             if (result != null) {
-                LOG.log(System.Logger.Level.INFO, "spawnNPC returned non-null result");
-                Ref<EntityStore> npcRef = result.first();
+                @SuppressWarnings("unchecked")
+                Ref<EntityStore> npcRef = (Ref<EntityStore>) result.first();
 
                 UUIDComponent uuidComp = store.getComponent(npcRef, UUIDComponent.getComponentType());
                 if (uuidComp != null) {
@@ -156,42 +161,64 @@ public class PatrolManager {
                         group.setScreamerUUID(uuid);
                     }
 
-                    // Set the patrol waypoints as a TransientPath on the NPC
-                    // The BodyMotionPath instruction in our custom role reads from this path
+                    // Log actual role info for debugging
+                    NPCEntity npcEntity = store.getComponent(npcRef, NPCEntity.getComponentType());
+                    if (npcEntity != null) {
+                        LOG.log(System.Logger.Level.INFO, "[SPAWN] NPC role info: roleName="
+                                + npcEntity.getRoleName() + " roleIndex=" + npcEntity.getRoleIndex()
+                                + " hasRole=" + (npcEntity.getRole() != null)
+                                + " isFollowingPath=" + npcEntity.getPathManager().isFollowingPath());
+                    }
+
+                    // Assign patrol waypoints via TransientPath — engine's BodyMotionPath reads this
                     assignPatrolPath(store, npcRef, group.getWaypoints());
 
-                    LOG.log(System.Logger.Level.INFO, "Patrol member spawned: " + uuid);
+                    // Log path status after assignment
+                    if (npcEntity != null) {
+                        LOG.log(System.Logger.Level.INFO, "[SPAWN] After path assign: isFollowingPath="
+                                + npcEntity.getPathManager().isFollowingPath());
+                    }
+
+                    LOG.log(System.Logger.Level.INFO, "[SPAWN] Patrol member spawned: uuid=" + uuid
+                            + " ref=" + npcRef + " group=" + group.getGroupId()
+                            + " waypoints=" + group.getWaypoints().size());
                 } else {
-                    LOG.log(System.Logger.Level.WARNING, "spawnNPC result has no UUIDComponent");
+                    LOG.log(System.Logger.Level.WARNING, "[SPAWN] spawnNPC result has no UUIDComponent");
                 }
             } else {
-                LOG.log(System.Logger.Level.ERROR, "spawnNPC returned null for role: " + PATROL_ROLE);
+                LOG.log(System.Logger.Level.ERROR, "[SPAWN] spawnNPC returned null for model=" + model
+                        + " role=" + PATROL_ROLE + " — role may not be loaded. "
+                        + "Check that IncludesAssetPack=true in manifest.json and role JSON is valid.");
             }
         } catch (Exception e) {
-            LOG.log(System.Logger.Level.ERROR, "Failed to spawn patrol member: " + e.getMessage(), e);
+            LOG.log(System.Logger.Level.ERROR, "[SPAWN] Failed to spawn patrol member: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Builds a TransientPath from the patrol waypoints and assigns it to the NPC's PathManager.
-     * The BodyMotionPath instruction in the Hylypto_Patrol_Zombie role will read from this path
-     * and drive native engine navigation (A*, steering, animation).
+     * Assigns a TransientPath with the group's waypoints to the NPC.
+     * The engine's BodyMotionPath instruction (from the custom role) reads this path
+     * and handles movement natively — no manual bodySteering writes needed.
      */
-    private void assignPatrolPath(Store<EntityStore> store, Ref<EntityStore> npcRef, List<Vector3d> waypoints) {
-        NPCEntity npc = store.getComponent(npcRef, NPCEntity.getComponentType());
-        if (npc == null) {
-            LOG.log(System.Logger.Level.WARNING, "Cannot assign path — NPCEntity component not found");
-            return;
-        }
+    private void assignPatrolPath(Store<EntityStore> store, Ref<EntityStore> ref, List<Vector3d> waypoints) {
+        try {
+            NPCEntity npc = store.getComponent(ref, NPCEntity.getComponentType());
+            if (npc == null) {
+                LOG.log(System.Logger.Level.WARNING, "[SPAWN] Cannot assign path — NPCEntity is null");
+                return;
+            }
 
-        TransientPath path = new TransientPath();
-        for (Vector3d wp : waypoints) {
-            // Compute yaw facing the next waypoint (or 0 for the last one)
-            path.addWaypoint(wp, new Vector3f(0, 0, 0));
-        }
+            TransientPath path = new TransientPath();
+            for (Vector3d wp : waypoints) {
+                path.addWaypoint(wp, new Vector3f(0, 0, 0));
+            }
 
-        npc.getPathManager().setTransientPath(path);
-        LOG.log(System.Logger.Level.DEBUG, "Assigned TransientPath with " + waypoints.size() + " waypoints to NPC");
+            npc.getPathManager().setTransientPath(path);
+            LOG.log(System.Logger.Level.INFO, "[SPAWN] Assigned TransientPath with " + waypoints.size()
+                    + " waypoints to NPC ref=" + ref);
+        } catch (Exception e) {
+            LOG.log(System.Logger.Level.ERROR, "[SPAWN] Failed to assign patrol path: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -238,22 +265,40 @@ public class PatrolManager {
      * Called by PatrolTickSystem for each patrol zombie.
      * Deduplicates per-group using lastTickMillis.
      */
+    private int tickGroupCount = 0;
+
     public void tickGroup(UUID groupId, Store<EntityStore> store) {
         PatrolGroup group = activeGroups.get(groupId);
-        if (group == null) return;
+        if (group == null) {
+            LOG.log(System.Logger.Level.WARNING, "[TICK-GROUP] groupId=" + groupId + " not found in activeGroups");
+            return;
+        }
 
         // Dedup — only tick once per cycle
         long now = System.currentTimeMillis();
         if (now - group.getLastTickMillis() < 500) return;
         group.setLastTickMillis(now);
 
+        tickGroupCount++;
+
         PatrolState currentState = group.getCurrentState();
         PatrolStateHandler handler = stateHandlers.get(currentState);
-        if (handler == null) return;
+        if (handler == null) {
+            LOG.log(System.Logger.Level.WARNING, "[TICK-GROUP] No handler for state " + currentState);
+            return;
+        }
+
+        if (tickGroupCount % 5 == 0) {
+            LOG.log(System.Logger.Level.INFO, "[TICK-GROUP] group=" + groupId
+                    + " state=" + currentState + " members=" + group.size()
+                    + " tick#=" + tickGroupCount);
+        }
 
         PatrolState newState = handler.tick(group, store);
 
         if (newState != currentState) {
+            LOG.log(System.Logger.Level.INFO, "[TICK-GROUP] group=" + groupId
+                    + " STATE TRANSITION: " + currentState + " -> " + newState);
             handler.onExit(group, store);
             group.transitionTo(newState);
 
@@ -370,6 +415,66 @@ public class PatrolManager {
 
     public BlockBreakTracker getBlockBreakTracker() {
         return blockBreakTracker;
+    }
+
+    /**
+     * Draws debug shapes for all active patrol groups:
+     * - Green spheres at waypoints
+     * - Yellow arrows connecting waypoints
+     * - Red sphere at each zombie's current position
+     * - Blue arrow from each zombie toward current waypoint
+     */
+    public String debugDrawPaths() {
+        World world = Universe.get().getDefaultWorld();
+        if (world == null) return "No world available.";
+        if (activeGroups.isEmpty()) return "No active patrol groups.";
+
+        Vector3f green = new Vector3f(0f, 1f, 0f);
+        Vector3f yellow = new Vector3f(1f, 1f, 0f);
+        Vector3f red = new Vector3f(1f, 0f, 0f);
+        Vector3f blue = new Vector3f(0.2f, 0.5f, 1f);
+        float duration = 10.0f;
+
+        int groupCount = activeGroups.size();
+
+        world.execute(() -> {
+            Store<EntityStore> store = world.getEntityStore().getStore();
+
+            for (PatrolGroup group : activeGroups.values()) {
+                List<Vector3d> waypoints = group.getWaypoints();
+                int wpIdx = group.getCurrentWaypointIndex();
+
+                // Draw all waypoints as spheres (green = future, yellow = current)
+                for (int i = 0; i < waypoints.size(); i++) {
+                    Vector3d wp = waypoints.get(i);
+                    Vector3f color = (i == wpIdx) ? yellow : green;
+                    double radius = (i == wpIdx) ? 1.0 : 0.5;
+                    DebugUtils.addSphere(world, wp, color, radius, duration);
+                }
+
+                // Draw arrows between consecutive waypoints
+                for (int i = 0; i < waypoints.size() - 1; i++) {
+                    DebugUtils.addArrow(world, waypoints.get(i), waypoints.get(i + 1), yellow, duration, false);
+                }
+
+                // Draw each zombie's position and direction to current waypoint
+                Vector3d currentWp = group.getCurrentWaypoint();
+                for (Ref<EntityStore> ref : group.getMemberRefs()) {
+                    if (!ref.isValid()) continue;
+                    TransformComponent transform = store.getComponent(ref, TransformComponent.getComponentType());
+                    if (transform == null) continue;
+
+                    Vector3d pos = transform.getPosition();
+                    DebugUtils.addSphere(world, pos, red, 0.4, duration);
+
+                    if (currentWp != null) {
+                        DebugUtils.addArrow(world, pos, currentWp, blue, duration, false);
+                    }
+                }
+            }
+        });
+
+        return "Drawing paths for " + groupCount + " patrol group(s) — visible for " + (int) duration + "s.";
     }
 
     // --- Terrain helpers ---

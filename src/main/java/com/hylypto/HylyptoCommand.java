@@ -65,7 +65,8 @@ public class HylyptoCommand extends AbstractCommand {
                     + " | Patrol groups: " + patrolManager.getActiveGroupCount()
                     + " (" + patrolManager.getTotalPatrolZombies() + " zombies)";
             }
-            default -> "Unknown action: " + subcommand + ". Use: spawn/horde, patrol, kill, or status";
+            case "debug" -> patrolManager.debugDrawPaths();
+            default -> "Unknown action: " + subcommand + ". Use: spawn/horde, patrol, kill, status, or debug";
         };
 
         context.sendMessage(Message.raw(response));

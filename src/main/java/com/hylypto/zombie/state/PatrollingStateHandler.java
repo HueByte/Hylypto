@@ -13,18 +13,12 @@ import com.hylypto.zombie.PatrolGroup;
 import com.hylypto.zombie.detection.PlayerDetector;
 import com.hylypto.zombie.detection.PlayerFinder;
 
-import java.util.List;
-
-/**
- * Patrolling state — the BodyMotionPath instruction in the Hylypto_Patrol_Zombie role
- * handles all movement natively. The TransientPath was assigned at spawn time.
- * This handler only tracks waypoint progress (via centroid) and player detection.
- */
 public class PatrollingStateHandler implements PatrolStateHandler {
 
     private static final System.Logger LOG = System.getLogger(PatrollingStateHandler.class.getName());
 
     private final PatrolConfig config;
+    private int tickCount = 0;
 
     public PatrollingStateHandler(PatrolConfig config) {
         this.config = config;
@@ -32,26 +26,47 @@ public class PatrollingStateHandler implements PatrolStateHandler {
 
     @Override
     public PatrolState tick(PatrolGroup group, Store<EntityStore> store) {
+        tickCount++;
         Vector3d waypoint = group.getCurrentWaypoint();
         if (waypoint == null) {
-            LOG.log(System.Logger.Level.INFO, "Patrol " + group.getGroupId() + " — route complete, despawning");
+            LOG.log(System.Logger.Level.INFO, "[PATROL-TICK] group=" + group.getGroupId()
+                    + " — no waypoint left, DESPAWNING");
             return PatrolState.DESPAWNING;
         }
 
-        // Calculate group centroid from valid refs
         Vector3d centroid = calculateCentroid(group, store);
-        if (centroid == null) return PatrolState.PATROLLING;
+        if (centroid == null) {
+            LOG.log(System.Logger.Level.WARNING, "[PATROL-TICK] group=" + group.getGroupId()
+                    + " — centroid is null (no valid refs?), members=" + group.size());
+            return PatrolState.PATROLLING;
+        }
+
+        double distToWp = centroid.distanceTo(waypoint);
+
+        if (tickCount % 5 == 0) {
+            LOG.log(System.Logger.Level.INFO, "[PATROL-TICK] group=" + group.getGroupId()
+                    + " state=PATROLLING tick=" + tickCount
+                    + " members=" + group.size()
+                    + " wpIdx=" + group.getCurrentWaypointIndex()
+                    + " centroid=(" + (int) centroid.x + "," + (int) centroid.y + "," + (int) centroid.z + ")"
+                    + " waypoint=(" + (int) waypoint.x + "," + (int) waypoint.y + "," + (int) waypoint.z + ")"
+                    + " dist=" + String.format("%.1f", distToWp));
+        }
 
         // Check if centroid reached the current waypoint
-        // (The engine BodyMotionPath drives the actual movement — we just track progress)
-        if (centroid.distanceTo(waypoint) <= config.waypointArrivalRadius) {
+        if (distToWp <= config.waypointArrivalRadius) {
             if (!group.advanceWaypoint()) {
-                LOG.log(System.Logger.Level.INFO, "Patrol " + group.getGroupId() + " — reached final waypoint");
+                LOG.log(System.Logger.Level.INFO, "[PATROL-TICK] group=" + group.getGroupId()
+                        + " — reached final waypoint, DESPAWNING");
                 return PatrolState.DESPAWNING;
             }
             waypoint = group.getCurrentWaypoint();
-            LOG.log(System.Logger.Level.DEBUG,
-                    "Patrol " + group.getGroupId() + " — advancing to waypoint " + group.getCurrentWaypointIndex());
+            LOG.log(System.Logger.Level.INFO, "[PATROL-TICK] group=" + group.getGroupId()
+                    + " — advancing to waypoint " + group.getCurrentWaypointIndex()
+                    + " at (" + (int) waypoint.x + "," + (int) waypoint.y + "," + (int) waypoint.z + ")");
+
+            // Reassign TransientPath with remaining waypoints
+            reassignPatrolPath(group, store);
         }
 
         // Check for player detection
@@ -68,7 +83,10 @@ public class PatrollingStateHandler implements PatrolStateHandler {
 
                 if (PlayerDetector.canDetect(zombiePos, yaw, nearestPlayer,
                         config.detectionRange, config.fovDegrees, config.proximityAlwaysDetect)) {
-                    LOG.log(System.Logger.Level.INFO, "Patrol " + group.getGroupId() + " — player detected! AGGRO");
+                    LOG.log(System.Logger.Level.INFO, "[PATROL-TICK] group=" + group.getGroupId()
+                            + " — player detected at ("
+                            + (int) nearestPlayer.x + "," + (int) nearestPlayer.y + "," + (int) nearestPlayer.z
+                            + "), AGGRO!");
                     group.setLastKnownPlayerPosition(nearestPlayer);
                     return PatrolState.AGGRO;
                 }
@@ -80,33 +98,48 @@ public class PatrollingStateHandler implements PatrolStateHandler {
 
     @Override
     public void onEnter(PatrolGroup group, Store<EntityStore> store) {
-        LOG.log(System.Logger.Level.DEBUG, "Patrol " + group.getGroupId() + " — entering PATROLLING state");
+        LOG.log(System.Logger.Level.INFO, "[PATROL-ENTER] group=" + group.getGroupId()
+                + " — entering PATROLLING state, members=" + group.size()
+                + " wpIdx=" + group.getCurrentWaypointIndex());
+        tickCount = 0;
 
-        // Reassign the patrol path from the current waypoint onward
-        // (needed when returning from SEARCHING/AGGRO back to PATROLLING)
-        List<Vector3d> waypoints = group.getWaypoints();
-        int startIndex = group.getCurrentWaypointIndex();
-        if (startIndex < waypoints.size()) {
-            for (Ref<EntityStore> ref : group.getMemberRefs()) {
-                if (!ref.isValid()) continue;
-                try {
-                    NPCEntity npc = store.getComponent(ref, NPCEntity.getComponentType());
-                    if (npc == null) continue;
-
-                    TransientPath patrolPath = new TransientPath();
-                    for (int i = startIndex; i < waypoints.size(); i++) {
-                        patrolPath.addWaypoint(waypoints.get(i), new Vector3f(0, 0, 0));
-                    }
-                    npc.getPathManager().setTransientPath(patrolPath);
-                } catch (Exception e) {
-                    LOG.log(System.Logger.Level.ERROR, "Failed to reassign patrol path: " + e.getMessage());
-                }
-            }
-        }
+        // Reassign TransientPath from current waypoint onward so BodyMotionPath resumes patrol
+        reassignPatrolPath(group, store);
     }
 
     @Override
     public void onExit(PatrolGroup group, Store<EntityStore> store) {}
+
+    /**
+     * Reassigns a TransientPath with remaining waypoints to all group members.
+     * Called on state entry and when advancing waypoints so the engine's
+     * BodyMotionPath instruction picks up the new route.
+     */
+    private void reassignPatrolPath(PatrolGroup group, Store<EntityStore> store) {
+        var waypoints = group.getWaypoints();
+        int startIdx = group.getCurrentWaypointIndex();
+
+        TransientPath path = new TransientPath();
+        for (int i = startIdx; i < waypoints.size(); i++) {
+            path.addWaypoint(waypoints.get(i), new Vector3f(0, 0, 0));
+        }
+
+        int assigned = 0;
+        for (Ref<EntityStore> ref : group.getMemberRefs()) {
+            if (!ref.isValid()) continue;
+            try {
+                NPCEntity npc = store.getComponent(ref, NPCEntity.getComponentType());
+                if (npc != null) {
+                    npc.getPathManager().setTransientPath(path);
+                    assigned++;
+                }
+            } catch (Exception e) {
+                LOG.log(System.Logger.Level.ERROR, "[PATROL-PATH] Failed to reassign path: " + e.getMessage());
+            }
+        }
+        LOG.log(System.Logger.Level.INFO, "[PATROL-PATH] Reassigned TransientPath to " + assigned
+                + " NPCs, waypoints=" + (waypoints.size() - startIdx));
+    }
 
     private Vector3d calculateCentroid(PatrolGroup group, Store<EntityStore> store) {
         double sumX = 0, sumY = 0, sumZ = 0;

@@ -1,0 +1,77 @@
+{
+  "Type": "Generic",
+  "MaxHealth": 100,
+  "Appearance": "Zombie",
+  "NameTranslationKey": "npc.zombie",
+  "BusyStates": [],
+  "InitialMotionController": "Walk",
+  "DefaultPlayerAttitude": "HOSTILE",
+  "DefaultNPCAttitude": "NEUTRAL",
+  "Inertia": 0.8,
+  "KnockbackScale": 1.0,
+  "SeparationDistance": 2.0,
+  "ApplySeparation": true,
+  "ApplyAvoidance": true,
+  "CollisionDistance": 2.0,
+  "CollisionRadius": 0.5,
+  "DeathAnimationTime": 1.5,
+  "DespawnAnimationTime": 0.5,
+
+  "MotionControllerList": [
+    {
+      "Type": "Walk",
+      "MaxWalkSpeed": 5.0,
+      "Acceleration": 8.0,
+      "MaxRotationSpeed": 360.0,
+      "Gravity": 20.0,
+      "MaxFallSpeed": 20.0,
+      "MaxClimbHeight": 1.0,
+      "JumpForce": 8.0
+    }
+  ],
+
+  "Instructions": [
+    {
+      "Name": "chase_player",
+      "Sensor": {
+        "Type": "Player",
+        "Range": 20.0
+      },
+      "BodyMotion": {
+        "Type": "Seek",
+        "RelativeSpeed": 1.0,
+        "StopDistance": 2.0
+      },
+      "HeadMotion": {
+        "Type": "Watch",
+        "RelativeTurnSpeed": 1.0
+      }
+    },
+    {
+      "Name": "patrol_path",
+      "Sensor": {
+        "Type": "Path",
+        "PathType": "TransientPath",
+        "Range": 200.0
+      },
+      "BodyMotion": {
+        "Type": "Path",
+        "MinRelSpeed": 0.4,
+        "MaxRelSpeed": 0.6,
+        "StartAtNearestNode": true,
+        "Shape": "CHAIN",
+        "Direction": "FORWARD"
+      }
+    },
+    {
+      "Name": "wander_idle",
+      "BodyMotion": {
+        "Type": "Wander",
+        "RelativeSpeed": 0.3,
+        "MinMoveDistance": 2.0,
+        "StopDistance": 0.5,
+        "MaxHeadingChange": 90.0
+      }
+    }
+  ]
+}

@@ -5,6 +5,8 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import com.hypixel.hytale.builtin.path.path.TransientPath;
+import com.hypixel.hytale.server.npc.entities.NPCEntity;
 import com.hylypto.zombie.PatrolConfig;
 import com.hylypto.zombie.PatrolGroup;
 import com.hylypto.zombie.blockbreak.BlockBreakTracker;
@@ -81,8 +83,13 @@ public class AggroStateHandler implements PatrolStateHandler {
 
     @Override
     public void onEnter(PatrolGroup group, Store<EntityStore> store) {
-        LOG.log(System.Logger.Level.INFO, "Patrol " + group.getGroupId() + " — AGGRO!");
+        LOG.log(System.Logger.Level.INFO, "[AGGRO-ENTER] group=" + group.getGroupId()
+                + " — AGGRO! members=" + group.size());
         lastPlayerSeenMillis = System.currentTimeMillis();
+
+        // Clear TransientPath so the engine's Seek instruction doesn't try to cast it
+        // to IPrefabPath (causes ClassCastException). Seek uses its own A* pathfinding.
+        clearTransientPaths(group, store);
 
         // Trigger screamer on first aggro
         if (group.hasScreamer() && !group.hasScreamed() && group.getLastKnownPlayerPosition() != null) {
@@ -93,6 +100,20 @@ public class AggroStateHandler implements PatrolStateHandler {
 
     @Override
     public void onExit(PatrolGroup group, Store<EntityStore> store) {}
+
+    private void clearTransientPaths(PatrolGroup group, Store<EntityStore> store) {
+        for (Ref<EntityStore> ref : group.getMemberRefs()) {
+            if (!ref.isValid()) continue;
+            try {
+                NPCEntity npc = store.getComponent(ref, NPCEntity.getComponentType());
+                if (npc != null) {
+                    npc.getPathManager().setTransientPath(new TransientPath());
+                }
+            } catch (Exception e) {
+                LOG.log(System.Logger.Level.ERROR, "[AGGRO] Failed to clear path: " + e.getMessage());
+            }
+        }
+    }
 
     private void checkStuckZombiesForBlockBreak(PatrolGroup group, Store<EntityStore> store) {
         Vector3d target = group.getLastKnownPlayerPosition();
