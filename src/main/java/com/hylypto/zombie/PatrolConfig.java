@@ -20,7 +20,7 @@ public class PatrolConfig {
     public int searchDurationSeconds = 20;
 
     // Despawning
-    public double despawnDistanceFromPlayer = 50.0;
+    public double despawnDistanceFromPlayer = 100.0;
 
     // Screamer
     public boolean screamerEnabled = true;

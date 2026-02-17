@@ -1,11 +1,12 @@
 package com.hylypto.zombie.state;
 
+import com.hypixel.hytale.builtin.path.path.TransientPath;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.hypixel.hytale.builtin.path.path.TransientPath;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
 import com.hylypto.zombie.PatrolConfig;
 import com.hylypto.zombie.PatrolGroup;
@@ -14,10 +15,9 @@ import com.hylypto.zombie.detection.PlayerFinder;
 import com.hylypto.zombie.screamer.ScreamerManager;
 
 /**
- * Aggro state — the built-in Zombie AI (BodyMotionFind) already chases
- * players with proper pathfinding, steering, and animation.
- * We do NOT override movement here. This handler only tracks whether
- * the player is still in range and handles state transitions.
+ * Aggro state — updates TransientPath to point at the player so the engine's
+ * Path BodyMotion walks the zombies toward them. The Attack action on the
+ * instruction handles melee combat when within AttackDistance.
  */
 public class AggroStateHandler implements PatrolStateHandler {
 
@@ -28,6 +28,7 @@ public class AggroStateHandler implements PatrolStateHandler {
     private final BlockBreakTracker blockBreakTracker;
 
     private long lastPlayerSeenMillis = 0;
+    private Vector3d lastAssignedTarget = null;
 
     public AggroStateHandler(PatrolConfig config, ScreamerManager screamerManager,
                               BlockBreakTracker blockBreakTracker) {
@@ -59,9 +60,12 @@ public class AggroStateHandler implements PatrolStateHandler {
                 lastPlayerSeenMillis = System.currentTimeMillis();
                 group.setLastKnownPlayerPosition(nearestPlayer);
 
-                // The engine's Zombie AI handles chasing — we just track state
+                // Re-assign chase path if player moved significantly (>3 blocks)
+                if (lastAssignedTarget == null || nearestPlayer.distanceTo(lastAssignedTarget) > 3.0) {
+                    assignChasePath(group, store, nearestPlayer);
+                    lastAssignedTarget = nearestPlayer;
+                }
 
-                // Check for stuck zombies near blocks — trigger block breaking
                 if (config.blockBreakEnabled) {
                     checkStuckZombiesForBlockBreak(group, store);
                 }
@@ -86,33 +90,50 @@ public class AggroStateHandler implements PatrolStateHandler {
         LOG.log(System.Logger.Level.INFO, "[AGGRO-ENTER] group=" + group.getGroupId()
                 + " — AGGRO! members=" + group.size());
         lastPlayerSeenMillis = System.currentTimeMillis();
+        lastAssignedTarget = null;
 
-        // Clear TransientPath so the engine's Seek instruction doesn't try to cast it
-        // to IPrefabPath (causes ClassCastException). Seek uses its own A* pathfinding.
-        clearTransientPaths(group, store);
+        // Assign a TransientPath toward the player — Path BodyMotion walks them there
+        Vector3d playerPos = group.getLastKnownPlayerPosition();
+        if (playerPos != null) {
+            assignChasePath(group, store, playerPos);
+            lastAssignedTarget = playerPos;
+        }
 
         // Trigger screamer on first aggro
-        if (group.hasScreamer() && !group.hasScreamed() && group.getLastKnownPlayerPosition() != null) {
+        if (group.hasScreamer() && !group.hasScreamed() && playerPos != null) {
             screamerManager.onScream(group);
             group.setHasScreamed(true);
         }
     }
 
     @Override
-    public void onExit(PatrolGroup group, Store<EntityStore> store) {}
+    public void onExit(PatrolGroup group, Store<EntityStore> store) {
+        lastAssignedTarget = null;
+    }
 
-    private void clearTransientPaths(PatrolGroup group, Store<EntityStore> store) {
+    /**
+     * Sets a TransientPath with a single waypoint at the player's position.
+     * The engine's Path BodyMotion follows it, and Attack action fires when close.
+     */
+    private void assignChasePath(PatrolGroup group, Store<EntityStore> store, Vector3d target) {
+        TransientPath path = new TransientPath();
+        path.addWaypoint(target, new Vector3f(0, 0, 0));
+
+        int assigned = 0;
         for (Ref<EntityStore> ref : group.getMemberRefs()) {
             if (!ref.isValid()) continue;
             try {
                 NPCEntity npc = store.getComponent(ref, NPCEntity.getComponentType());
                 if (npc != null) {
-                    npc.getPathManager().setTransientPath(new TransientPath());
+                    npc.getPathManager().setTransientPath(path);
+                    assigned++;
                 }
             } catch (Exception e) {
-                LOG.log(System.Logger.Level.ERROR, "[AGGRO] Failed to clear path: " + e.getMessage());
+                LOG.log(System.Logger.Level.ERROR, "[AGGRO-PATH] Failed to assign chase path: " + e.getMessage());
             }
         }
+        LOG.log(System.Logger.Level.DEBUG, "[AGGRO-PATH] Assigned chase path to " + assigned
+                + " NPCs toward (" + (int) target.x + "," + (int) target.y + "," + (int) target.z + ")");
     }
 
     private void checkStuckZombiesForBlockBreak(PatrolGroup group, Store<EntityStore> store) {

@@ -80,15 +80,16 @@ public class PatrolManager {
                         "spawnPatrol — player at (" + (int) playerPos.x + ", " + (int) playerPos.y
                         + ", " + (int) playerPos.z + "), groupSize=" + groupSize);
 
-                List<Vector3d> route = generatePatrolRoute(playerPos, world);
+                PatrolRoute patrol = generatePatrolRoute(playerPos, world);
+                List<Vector3d> route = patrol.waypoints();
                 PatrolGroup group = new PatrolGroup(groupId, route, includeScreamer && config.screamerEnabled);
 
                 LOG.log(System.Logger.Level.INFO,
                         "Spawning patrol " + groupId + " — " + groupSize + " zombies, "
                         + route.size() + " waypoints, screamer=" + group.hasScreamer());
 
-                // Spawn near the player (within loaded chunks), first waypoint is the walk-toward target
-                Vector3d spawnCenter = generateSpawnPosition(playerPos, world);
+                // Spawn far from player along the patrol direction
+                Vector3d spawnCenter = generateSpawnPosition(playerPos, world, patrol.dirAngle());
 
                 Store<EntityStore> store = world.getEntityStore().getStore();
 
@@ -114,13 +115,12 @@ public class PatrolManager {
      * Generates a spawn position within loaded chunk range of the player,
      * but far enough to be outside direct line of sight.
      */
-    private Vector3d generateSpawnPosition(Vector3d playerPos, World world) {
+    private Vector3d generateSpawnPosition(Vector3d playerPos, World world, double dirAngle) {
+        // Spawn 80-120 blocks away along the patrol direction — far from player
         ThreadLocalRandom rng = ThreadLocalRandom.current();
-        double angle = rng.nextDouble() * 2 * Math.PI;
-        // Spawn 30-50 blocks away — within loaded chunks but out of easy view
-        double dist = 30.0 + rng.nextDouble() * 20.0;
-        double x = playerPos.x + Math.cos(angle) * dist;
-        double z = playerPos.z + Math.sin(angle) * dist;
+        double dist = 80.0 + rng.nextDouble() * 40.0;
+        double x = playerPos.x + Math.cos(dirAngle) * dist;
+        double z = playerPos.z + Math.sin(dirAngle) * dist;
         double y = findSurfaceY(world, (int) x, (int) playerPos.y + 30, (int) z);
         return new Vector3d(x, y, z);
     }
@@ -222,41 +222,43 @@ public class PatrolManager {
     }
 
     /**
-     * Generates a patrol route that passes through the player's area.
-     * Waypoints stay within reasonable range (loaded chunks).
-     * Route: toward player → through player area → away on the other side.
+     * Generates a patrol route that crosses through the player's area.
+     * Route: spawn far away → approach player area → pass through → exit far on opposite side.
+     * Returns both the route and the direction angle (for spawn positioning).
      */
-    private List<Vector3d> generatePatrolRoute(Vector3d playerPos, World world) {
+    private record PatrolRoute(List<Vector3d> waypoints, double dirAngle) {}
+
+    private PatrolRoute generatePatrolRoute(Vector3d playerPos, World world) {
         List<Vector3d> waypoints = new ArrayList<>();
         ThreadLocalRandom rng = ThreadLocalRandom.current();
 
         double dirAngle = rng.nextDouble() * 2 * Math.PI;
-
-        // First waypoint: near the player (patrol walks toward them)
-        double nearDist = 10.0 + rng.nextDouble() * 10.0;
         double perpAngle = dirAngle + Math.PI / 2;
-        double lateralOffset = rng.nextDouble(-15, 15);
-        double wx = playerPos.x + Math.cos(dirAngle) * nearDist + Math.cos(perpAngle) * lateralOffset;
-        double wz = playerPos.z + Math.sin(dirAngle) * nearDist + Math.sin(perpAngle) * lateralOffset;
+
+        // First waypoint: approaching the player area (30-40 blocks out)
+        double approachDist = 30.0 + rng.nextDouble() * 10.0;
+        double lateralOffset = rng.nextDouble(-10, 10);
+        double wx = playerPos.x + Math.cos(dirAngle) * approachDist + Math.cos(perpAngle) * lateralOffset;
+        double wz = playerPos.z + Math.sin(dirAngle) * approachDist + Math.sin(perpAngle) * lateralOffset;
         double wy = findSurfaceY(world, (int) wx, (int) playerPos.y + 30, (int) wz);
         waypoints.add(new Vector3d(wx, wy, wz));
 
-        // Second waypoint: through the player area (close to player)
+        // Second waypoint: right through the player's position (small offset for variety)
+        lateralOffset = rng.nextDouble(-8, 8);
         double throughDist = rng.nextDouble(-5, 5);
-        lateralOffset = rng.nextDouble(-10, 10);
-        wx = playerPos.x + Math.cos(dirAngle) * throughDist + Math.cos(perpAngle) * lateralOffset;
-        wz = playerPos.z + Math.sin(dirAngle) * throughDist + Math.sin(perpAngle) * lateralOffset;
+        wx = playerPos.x + Math.cos(perpAngle) * lateralOffset + Math.cos(dirAngle) * throughDist;
+        wz = playerPos.z + Math.sin(perpAngle) * lateralOffset + Math.sin(dirAngle) * throughDist;
         wy = findSurfaceY(world, (int) wx, (int) playerPos.y + 30, (int) wz);
         waypoints.add(new Vector3d(wx, wy, wz));
 
-        // Third waypoint: away from player on the opposite side (still within loaded range)
-        double awayDist = 40.0 + rng.nextDouble() * 20.0;
-        wx = playerPos.x - Math.cos(dirAngle) * awayDist;
-        wz = playerPos.z - Math.sin(dirAngle) * awayDist;
+        // Third waypoint: far away on the opposite side (80-120 blocks from player)
+        double exitDist = 80.0 + rng.nextDouble() * 40.0;
+        wx = playerPos.x - Math.cos(dirAngle) * exitDist;
+        wz = playerPos.z - Math.sin(dirAngle) * exitDist;
         wy = findSurfaceY(world, (int) wx, (int) playerPos.y + 30, (int) wz);
         waypoints.add(new Vector3d(wx, wy, wz));
 
-        return waypoints;
+        return new PatrolRoute(waypoints, dirAngle);
     }
 
     // --- State machine dispatch ---
